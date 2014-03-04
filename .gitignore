@@ -30,7 +30,7 @@
 *.gz
 
 # target
-com
+com_check
 
 #
 # Top-level generic files

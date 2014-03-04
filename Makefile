@@ -1,6 +1,6 @@
 src := $(wildcard *.c)
 objs := $(patsubst %.c, %.o, $(src))
-target := com
+target := com_check
 cc := arm-linux-gcc
 
 all:$(target)

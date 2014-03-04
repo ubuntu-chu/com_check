@@ -319,7 +319,7 @@ int tty_dev_open(const char *pdev, int baud){
 /* The name of this program */
 const char * program_name;
 
-const char *const short_options = "hd:t:f:b:";
+const char *const short_options = "hd:t:f:b:l:";
 
 const struct option long_options[] = {
 	{ "help",   0, NULL, 'h'},
@@ -327,6 +327,7 @@ const struct option long_options[] = {
 	{ "dest device", 1, NULL, 't'},
 	{ "function", 1, NULL, 'f'},
 	{ "baud", 1, NULL, 'b'},
+	{ "loop", 1, NULL, 'l'},
 	{ NULL,     0, NULL, 0  }
 };
 
@@ -344,6 +345,7 @@ void print_usage (FILE *stream, int exit_code)
             "\t-t  --dest device  The device ttySAC[1-8] or ttyEXT[0-3]\n"
             "\t-f  --function     Function:send  recv  [send&recv] when -f=send&recv -t param is invalid\n"
             "\t-b  --baud		  Baud per sec:value 2400 4800 9600 19200 38400 57600 115200\n"
+            "\t-l  --loop		  Loop per test, -1 means infinite loop\n"
 			);
     exit(exit_code);
 }
@@ -363,6 +365,8 @@ int main(int argc, char *argv[])
 	int switch_flg = 0;
 
 	int loop_cnt	= 1;
+	int loop_total  = -1;
+	int fail_cnt, success_cnt;
  	int nread, nsend, send;			/* Read the counts of data */
 	pid_t pid;
 	char xmit[WIDTH_TOTAL];
@@ -400,6 +404,10 @@ int main(int argc, char *argv[])
 				break;
             case 'b':
                 baud = atoi(optarg);
+				havearg = 1;
+				break;
+            case 'l':
+                loop_total = atoi(optarg);
 				havearg = 1;
 				break;
             case 'f':
@@ -455,7 +463,9 @@ int main(int argc, char *argv[])
 	}
 	
 	switch_flg					= 0;
-	while (1){
+	fail_cnt					= 0;
+	success_cnt					= 0;
+	while ((loop_cnt <= loop_total) || (-1 == loop_total)){
 		now_time				= time(NULL);
 		strcpy(xmit, ctime((const time_t *)&now_time));
 		xmit[strlen(xmit) - 1]		= 0;
@@ -487,6 +497,11 @@ int main(int argc, char *argv[])
 			}
 		}
 		printf("[%s]: %s(fd = %d) -> %s(fd = %d)\n", xmit, send_dev, send_fd, recv_dev, recv_fd);
+		if (-1 != loop_total){
+			printf("loop tot.: [%d]\n", loop_total);
+		}else {
+			printf("loop tot.: [infinite loop]\n");
+		}
 		printf("loop cnts: [%d]\n", loop_cnt);
 		fread(&seed, sizeof(int), 1, fs_p);  //obtain one unsigned int data   
 		srand(seed);  
@@ -507,33 +522,46 @@ int main(int argc, char *argv[])
 				printf("send err! continue\n");
 				continue;
 			}
-			printf("send len : %d\n", nsend);
+			printf("send len : [%d]\n", nsend);
 			printf("send data: %s\n", xmit);
-			sleep(2);
+//			sleep(2);
 		//	sleep(15);
 		}
 		if (recv_fd > 0){
 			memset(buff, 0, sizeof(buff));
 			rt = dev_read(recv_fd, buff, &nread);
 			if (nread > 0) {
-				printf("recv len : %d\n", nread);
+				printf("recv len : [%d]\n", nread);
 				printf("recv data: %s\n", buff);
 			}else if (nread == 0){
-				printf("recv timeout! please check hardware\n");
+				printf("recv     : [timeout! please check hardware!]\n");
 			}else {
 			//	printf("recv err : [%s]\n", strerror(errno));
-				printf("recv err!\n");
+				printf("recv     : [err!]\n");
 			}
-			sleep(1);
 		}
 		if (FUNCTION_SEND_RECV == function){
 			if ((nread == nsend) && (0 == strcmp(buff, xmit))){
 				printf("result   : [------------ok-----------]\n\n");
+				success_cnt++;
 			}else {
 				printf("result   : [-----------fail----------]\n\n");
+				fail_cnt++;
 			}
 		}
+		sleep(1);
 	}
+	if ((FUNCTION_SEND_RECV == function) && (-1 != loop_total)){
+		printf("<------------------summarize-------------------->\n");
+		printf("totol   count: [%d]\n", loop_total);
+		printf("success count: [%d]\n", success_cnt);
+		printf("fail    count: [%d]\n", fail_cnt);
+		printf("success rate : [%.2f%]\n", ((float)success_cnt/loop_total)*100);
+	}	
+
+	return 0;
+}
+
 #if 0
 	pid = fork();	
 	if (pid < 0) { 
@@ -579,7 +607,4 @@ int main(int argc, char *argv[])
     close(fd);
     exit(0);
 #endif
-
-	return 0;
-}
 
