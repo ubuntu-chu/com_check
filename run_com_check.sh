@@ -19,7 +19,7 @@
 #./com_check -d /dev/ttySAC6 -f send
 
 #./com_check -d /dev/ttySAC5 -t /dev/ttySAC6 -b 19200 -l 5
-./com_check -d /dev/ttySAC5 -t /dev/ttySAC6 -b 19200
+./com_check -d /dev/ttySAC3 -t /dev/ttySAC4 -b 19200
 
 
 

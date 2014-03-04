@@ -20,11 +20,15 @@
 #define BAUD_DEFAULT	(9600)
 
 #define WIDTH_ADD		(20)
-//#define WIDTH_INIT		(2720)
-//#define WIDTH_TOTAL 	(3024)
+#if 1
+
+#define WIDTH_INIT		(2720)
+#define WIDTH_TOTAL 	(3024)
+#else
 
 #define WIDTH_INIT		(120)
 #define WIDTH_TOTAL 	(1024)
+#endif
 
 #define DATA_PREFIX(x)  "<"x">"
 
@@ -281,7 +285,7 @@ int dev_read(int fd, char *buf, int *plen){
 	maxwaittime		= 1000;
 	while ((rt = char_read(fd, (char *)&buf[len], cnt_per_read, maxwaittime)) > 0){
 		len			+= rt;
-		maxwaittime  = 100;
+		maxwaittime  = 300;
 	}
 	if (NULL != plen){
 		*plen				= len;

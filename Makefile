@@ -12,10 +12,13 @@ $(target):$(objs)
 %.o:%.c
 	$(cc) -c -o $@ $<
 
+copy:
+	cp run_com_check.sh /home/barnard/work/board_9G25/rootfs/home/bsp/
+
 clean:
 	rm -rf $(target) $(objs)
 
 
-.PHONY:all clean
+.PHONY:all clean copy
 
 
