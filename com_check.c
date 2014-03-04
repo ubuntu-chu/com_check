@@ -28,6 +28,8 @@
 
 #define DATA_PREFIX(x)  "<"x">"
 
+#define DEV_FILE_PATH	"/dev/ttySAC"
+#define DEBUG			(0)
 
 enum {
 	FUNCTION_SEND	= 1,
@@ -158,14 +160,19 @@ const char * dev_file_name(int index){
 	return device_str;
 }
 
-int dev_open(int index){
+int dev_path_open(const char * ppath){
 
 	int fd;
 	//non - blocking open
-    fd = open(dev_file_name(index), O_RDWR | O_NOCTTY | O_NDELAY);
+    fd = open(ppath, O_RDWR | O_NOCTTY | O_NDELAY);
 	printf("DBG:fd [%d] open\n", fd);
 
 	return fd;
+}
+
+int dev_open(int index){
+
+	return dev_path_open(dev_file_name(index));
 }
 
 int dev_close(int fd){
@@ -287,7 +294,7 @@ int tty_dev_open(const char *pdev, int baud){
 
 	int fd;
 
-	fd = dev_open(pdev);
+	fd = dev_path_open(pdev);
 
 	if (fd < 0) {
 		fprintf(stderr, "Error opening %s: %s\n", pdev, strerror(errno));
@@ -374,7 +381,7 @@ int main(int argc, char *argv[])
 	unsigned int seed = 0;  
 	int	 random_send;
 	int  width_ctrl, width_total = WIDTH_INIT;
-	int  index;
+	int  index, rt;
 	int  baud	= BAUD_DEFAULT;
 		      
     program_name = argv[0];
@@ -495,7 +502,7 @@ int main(int argc, char *argv[])
 		if (send_fd > 0){
 			nsend	= strlen(xmit);
 			//nsend	= 1;
-			send = write(send_fd, xmit, nsend);
+			send = dev_write(send_fd, xmit, nsend);
 			if (send != nsend){
 				printf("send err! continue\n");
 				continue;
@@ -507,10 +514,12 @@ int main(int argc, char *argv[])
 		}
 		if (recv_fd > 0){
 			memset(buff, 0, sizeof(buff));
-			nread = read(recv_fd, buff, sizeof(buff));
+			rt = dev_read(recv_fd, buff, &nread);
 			if (nread > 0) {
 				printf("recv len : %d\n", nread);
 				printf("recv data: %s\n", buff);
+			}else if (nread == 0){
+				printf("recv timeout! please check hardware\n");
 			}else {
 				printf("recv err : [%s]\n", strerror(errno));
 

@@ -29,6 +29,9 @@
 *.bin
 *.gz
 
+# target
+com
+
 #
 # Top-level generic files
 #
