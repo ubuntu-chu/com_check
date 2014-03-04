@@ -145,26 +145,149 @@ int dev_conf(int fd, int baud, int databits, int stopbits, int parity){
 /**
 	*@breif 打开串口
 */
-int OpenDev(const char *Dev)
-{
-	int fd = open(Dev, O_RDWR );         //| O_NOCTTY | O_NDELAY
- 	if (-1 == fd) { /*设置数据位数*/
-   		perror("Can't Open Serial Port");
-   		return -1;
-	} else
-		return fd;
+const char * dev_file_name(int index){
+
+	static char	device_str[100];
+
+	sprintf(device_str, DEV_FILE_PATH"%d", index);
+#if (DEBUG > 0)
+
+	printf("DBG:device name:%s\n", device_str);
+#endif
+
+	return device_str;
 }
 
+int dev_open(int index){
 
-/* The name of this program */
-const char * program_name;
+	int fd;
+	//non - blocking open
+    fd = open(dev_file_name(index), O_RDWR | O_NOCTTY | O_NDELAY);
+	printf("DBG:fd [%d] open\n", fd);
 
+	return fd;
+}
+
+int dev_close(int fd){
+
+	tcflush(fd, TCIOFLUSH);
+	close(fd);
+	printf("DBG:fd [%d] close\n", fd);
+
+	return 0;
+}
+
+int dev_write(int fd, const char *str, int len){
+
+	int rt;
+	int n		= 0;
+	int tot_n	= 0;
+	const char *str_tmp	= str;
+
+	while (len){
+
+		n = write(fd, str+tot_n, len);
+		if (n < 0){
+			if (n == EINTR){
+				continue;
+			}else {
+				break;
+			}
+		}
+		tot_n	+= n;
+		len		-= n;
+	}
+
+	return tot_n;
+}
+
+int char_read(int fd, char *buf, int len, int maxwaittime)	
+{
+	int		no		= 0;
+	int		rt;
+	int		loop	= 1;
+	int		rtnum	= len;
+	struct	timeval tv;
+	struct	timeval *ptimeval;
+	fd_set	readfd;
+
+	if (maxwaittime == 0){
+		ptimeval	= NULL;
+	}else {
+		tv.tv_sec	= maxwaittime / 1000;	//SECOND
+		tv.tv_usec	= maxwaittime % 1000 * 1000;	//USECOND
+		ptimeval	= &tv;
+	}
+
+	while (loop){
+
+		loop		= 0;
+		FD_ZERO(&readfd);
+		FD_SET(fd, &readfd);
+		rt = select(fd + 1, &readfd, NULL, NULL, ptimeval);
+		if (rt == -1){
+			if (rt == EINTR){
+				loop	= 1;
+				continue;
+			}else{
+				break;
+			}
+		}else if (rt > 0) {
+			while (len) {
+				rt = read(fd, &buf[no], len);
+				if (rt > 0){
+					no += rt;
+				}else {
+				#if (DEBUG > 0)
+
+					printf("no = %d, len = %d, read return -1\n", no, rtnum);
+				#endif
+					return no;
+				}
+				len = len - rt;
+			}
+			return no;
+		}else {
+			//time out
+		#if (DEBUG > 0)
+
+			//printf("select time out rt = %d\n", rt);
+		#endif
+		}
+	}
+
+	return rt;
+}
+
+//non-blocking read
+int dev_read(int fd, char *buf, int *plen){
+
+	int		maxwaittime		= 0;
+	int		len				= 0;
+	int		rt;
+	int     cnt_per_read	= 10;
+	
+	if (NULL == buf){
+		return -1;
+	}
+
+	maxwaittime		= 1000;
+	while ((rt = char_read(fd, (char *)&buf[len], cnt_per_read, maxwaittime)) > 0){
+		len			+= rt;
+		maxwaittime  = 100;
+	}
+	if (NULL != plen){
+		*plen				= len;
+	}
+
+	return 0;
+}
 
 int tty_dev_open(const char *pdev, int baud){
 
 	int fd;
 
-	fd = OpenDev(pdev);
+	fd = dev_open(pdev);
 
 	if (fd < 0) {
 		fprintf(stderr, "Error opening %s: %s\n", pdev, strerror(errno));
@@ -177,6 +300,7 @@ int tty_dev_open(const char *pdev, int baud){
 	}
 	printf("device [%s]: setting\n", pdev);
 	printf("           : fd  \t[%d]\n", fd);
+
 	printf("           : baud\t[%dbps]\n", baud);
 	printf("           : bits\t[%d]\n", BITS_DEFAULT);
 	printf("           : stop\t[%d]\n", STOP_DEFAULT);
@@ -184,6 +308,9 @@ int tty_dev_open(const char *pdev, int baud){
 
 	return fd;
 }
+
+/* The name of this program */
+const char * program_name;
 
 const char *const short_options = "hd:t:f:b:";
 
