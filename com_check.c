@@ -271,11 +271,11 @@ int dev_read(int fd, char *buf, int *plen){
 
 	int		maxwaittime		= 0;
 	int		len				= 0;
-	int		rt;
+	int		rt				= -1;
 	int     cnt_per_read	= 10;
 	
 	if (NULL == buf){
-		return -1;
+		return rt;
 	}
 
 	maxwaittime		= 1000;
@@ -287,7 +287,7 @@ int dev_read(int fd, char *buf, int *plen){
 		*plen				= len;
 	}
 
-	return 0;
+	return rt;
 }
 
 int tty_dev_open(const char *pdev, int baud){
@@ -521,8 +521,8 @@ int main(int argc, char *argv[])
 			}else if (nread == 0){
 				printf("recv timeout! please check hardware\n");
 			}else {
-				printf("recv err : [%s]\n", strerror(errno));
-
+			//	printf("recv err : [%s]\n", strerror(errno));
+				printf("recv err!\n");
 			}
 			sleep(1);
 		}
