@@ -20,7 +20,7 @@
 #define BAUD_DEFAULT	(9600)
 
 #define WIDTH_ADD		(20)
-#if 1
+#if 0
 
 #define WIDTH_INIT		(2720)
 #define WIDTH_TOTAL 	(3024)
@@ -168,7 +168,7 @@ int dev_path_open(const char * ppath){
 
 	int fd;
 	//non - blocking open
-    fd = open(ppath, O_RDWR | O_NOCTTY | O_NDELAY);
+    fd = open(ppath, O_RDWR | O_NOCTTY | O_NDELAY | O_SYNC);
 	printf("DBG:fd [%d] open\n", fd);
 
 	return fd;
@@ -271,21 +271,20 @@ int char_read(int fd, char *buf, int len, int maxwaittime)
 }
 
 //non-blocking read
-int dev_read(int fd, char *buf, int *plen){
+int dev_read(int fd, char *buf, int *plen, int wait_time){
 
-	int		maxwaittime		= 0;
 	int		len				= 0;
 	int		rt				= -1;
 	int     cnt_per_read	= 10;
+	int     interval_time_per_read	= wait_time;    //unit: ms
 	
 	if (NULL == buf){
 		return rt;
 	}
 
-	maxwaittime		= 1000;
-	while ((rt = char_read(fd, (char *)&buf[len], cnt_per_read, maxwaittime)) > 0){
+	while ((rt = char_read(fd, (char *)&buf[len], cnt_per_read, interval_time_per_read)) > 0){
 		len			+= rt;
-		maxwaittime  = 300;
+		interval_time_per_read	= 100;
 	}
 	if (NULL != plen){
 		*plen				= len;
@@ -368,6 +367,7 @@ int main(int argc, char *argv[])
 	int recv_fd = -1;
 	int switch_flg = 0;
 
+	int read_wait_time;
 	int loop_cnt	= 1;
 	int loop_total  = -1;
 	int fail_cnt, success_cnt;
@@ -469,6 +469,7 @@ int main(int argc, char *argv[])
 	switch_flg					= 0;
 	fail_cnt					= 0;
 	success_cnt					= 0;
+	read_wait_time				= 1000;      //unit:ms
 	while ((loop_cnt <= loop_total) || (-1 == loop_total)){
 		now_time				= time(NULL);
 		strcpy(xmit, ctime((const time_t *)&now_time));
@@ -484,6 +485,7 @@ int main(int argc, char *argv[])
 			send_dev			= "external device";
 			recv_fd				= src_fd;
 			recv_dev			= src_dev;
+			read_wait_time		= 0;
 		}else {
 
 			if (switch_flg){
@@ -528,12 +530,13 @@ int main(int argc, char *argv[])
 			}
 			printf("send len : [%d]\n", nsend);
 			printf("send data: %s\n", xmit);
-//			sleep(2);
+			fsync(send_fd);
+			sleep(2);
 		//	sleep(15);
 		}
 		if (recv_fd > 0){
 			memset(buff, 0, sizeof(buff));
-			rt = dev_read(recv_fd, buff, &nread);
+			rt = dev_read(recv_fd, buff, &nread, read_wait_time);
 			if (nread > 0) {
 				printf("recv len : [%d]\n", nread);
 				printf("recv data: %s\n", buff);
