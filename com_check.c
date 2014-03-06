@@ -530,7 +530,7 @@ int main(int argc, char *argv[])
 			}
 			printf("send len : [%d]\n", nsend);
 			printf("send data: %s\n", xmit);
-			fsync(send_fd);
+			tcflush(send, TCIOFLUSH);
 			sleep(2);
 		//	sleep(15);
 		}
