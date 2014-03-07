@@ -9,6 +9,8 @@
 #include <getopt.h>
 #include <string.h>
 #include <time.h>
+#include <signal.h>
+
 
 #define FALSE			(1)
 #define TRUE			(0)
@@ -31,9 +33,10 @@
 #endif
 
 #define DATA_PREFIX(x)  "<"x">"
-
 #define DEV_FILE_PATH	"/dev/ttySAC"
-#define DEBUG			(0)
+
+#define DEBUG			(1)
+#define NONBLOCKING_ACCESS	(0)
 
 enum {
 	FUNCTION_SEND	= 1,
@@ -45,6 +48,181 @@ struct baud_setting{
 	int		m_baud;
 	int     m_value;
 };
+
+int  src_fd		= -1;
+struct termios src_oldtermios;
+int  dest_fd	= -1; 
+struct termios dest_oldtermios;
+sig_atomic_t run = TRUE;
+
+const char valid_input_set[] = {
+	'\n', 's', 'q'
+};
+
+struct operate_hint_param{
+	const char *m_hint_str;
+	const char *m_valid_set;
+	int			m_numb;
+};
+
+const struct operate_hint_param t_hint_param[] = {
+	{
+		(const char *)"Press Enter to continue, s to skip this step, q to quit, Ctrl+c to interrupt.\n",
+		valid_input_set,
+		sizeof(valid_input_set)/sizeof(valid_input_set[0]),
+	},
+};
+
+
+/*----------------------------------------------------------------------*/
+
+static int stdin_uninit(void);
+int dev_close(int fd);
+void dev_block(int fd);
+void dev_nonblock(int fd);
+int tty_dev_close(int fd, struct termios *ptermios);
+int dev_conf_save(int fd, struct termios *ptermios);
+int dev_conf_restore(int fd, struct termios *ptermios);
+
+void hand_sig(int signo) {
+
+	run = FALSE;
+}
+
+/*----------------------------------------------------------------------*/
+
+struct termios stdin_oldtermios;
+
+static int stdin_init(void){
+
+	struct termios newt;
+
+	dev_conf_save(STDIN_FILENO, &stdin_oldtermios);
+	newt			= stdin_oldtermios;  
+	//取消回显
+	newt.c_lflag	&= ~(ICANON | ECHO);  
+	if (tcsetattr(STDIN_FILENO, TCSANOW, &newt) != 0){
+		perror("tcsetattr error!\n");
+		return -1;
+	}
+
+	/* set the nonblock */
+	dev_nonblock(STDIN_FILENO);
+
+	return 0;  
+}  
+
+static int stdin_uninit(void){
+
+	dev_conf_restore(STDIN_FILENO, &stdin_oldtermios);
+	dev_block(STDIN_FILENO);
+
+	return 0;
+}
+
+static void stdin_flush(void){
+
+	fd_set rfds;
+	struct timeval tv;
+	int retval;
+
+	while (1){
+		/* Watch stdin (fd 0) to see when it has input. */
+		FD_ZERO(&rfds);
+		FD_SET(STDIN_FILENO, &rfds);
+		tv.tv_sec  = 0;
+		tv.tv_usec = 0;
+
+		retval = select(STDIN_FILENO+1, &rfds, NULL, NULL, &tv);
+		/* Don't rely on the value of tv now! */
+
+		if (retval == -1) {
+			if (errno == EINTR){
+				continue;
+			}else{
+				break;
+			}
+		}else if (retval){
+			getchar();
+		}else{
+			break;
+		}
+	}
+}
+
+static int char_get(void){
+
+	fd_set rfds;
+	struct timeval tv;
+	int retval;
+	int c;
+
+	while (1){
+		/* Watch stdin (fd 0) to see when it has input. */
+		FD_ZERO(&rfds);
+		FD_SET(STDIN_FILENO, &rfds);
+		tv.tv_sec  = 0;
+		tv.tv_usec = 0;
+
+		retval = select(STDIN_FILENO+1, &rfds, NULL, NULL, &tv);
+		/* Don't rely on the value of tv now! */
+
+		if (retval == -1) {
+			perror("select()");
+			if (retval == EINTR){
+				continue;
+			}else{
+				c	= -1;
+				break;
+			}
+		}else if (retval){
+			c	= getchar();
+			break;
+		}
+	}
+
+	return c;
+}
+									   
+
+int operate_hint(const struct operate_hint_param *pparam){
+
+	int		input_char;
+	int		i;
+
+	stdin_flush();	
+	if (NULL != pparam->m_hint_str){
+		printf(pparam->m_hint_str);
+	}
+
+	do {
+		input_char	= char_get();
+		for (i = 0; i < pparam->m_numb; i++){
+			if (input_char == pparam->m_valid_set[i]){
+				break;
+			}
+		}
+		if (i == pparam->m_numb){
+			if (input_char == '\n'){
+				printf("[enter]: invalid char input! please input again!\n");
+			}else {
+				printf("[%c]: invalid char input! please input again!\n", input_char);
+			}
+			if (NULL != pparam->m_hint_str){
+				printf(pparam->m_hint_str);
+			}
+		}
+	}while (i == pparam->m_numb);
+#if (DEBUG > 0)
+
+	printf("input char = %d\n", input_char);
+#endif
+
+	return input_char;
+}
+
+/*----------------------------------------------------------------------*/
+
 
 const struct baud_setting t_serial_baud_setting[] = {
 	{921600,	B921600},	
@@ -60,6 +238,26 @@ const struct baud_setting t_serial_baud_setting[] = {
 	{1200  ,	B1200  },	
 	{300   ,	B300   },	
 };
+
+int dev_conf_save(int fd, struct termios *ptermios){
+
+	if (tcgetattr(fd, ptermios) != 0){
+		perror("tcgetattr error!\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+int dev_conf_restore(int fd, struct termios *ptermios){
+
+	if (tcsetattr(fd, TCSANOW, ptermios) != 0){
+		perror("tcsetattr error!\n");
+		return -1;
+	}
+
+	return 0;
+}
 
 int dev_conf(int fd, int baud, int databits, int stopbits, int parity){
 
@@ -167,9 +365,23 @@ const char * dev_file_name(int index){
 int dev_path_open(const char * ppath){
 
 	int fd;
+#if (NONBLOCKING_ACCESS > 0)
+	
 	//non - blocking open
     fd = open(ppath, O_RDWR | O_NOCTTY | O_NDELAY | O_SYNC);
-	printf("DBG:fd [%d] open\n", fd);
+#if (DEBUG > 0)
+
+	printf("DBG:fd [%d] non-block open\n", fd);
+#endif
+#else
+
+    //fd = open(ppath, O_RDWR | O_NOCTTY);
+    fd = open(ppath, O_RDWR );
+#if (DEBUG > 0)
+
+	printf("DBG:fd [%d] block open\n", fd);
+#endif
+#endif
 
 	return fd;
 }
@@ -179,27 +391,54 @@ int dev_open(int index){
 	return dev_path_open(dev_file_name(index));
 }
 
+void dev_block(int fd){
+	int flags;
+
+	flags = fcntl(fd,F_GETFL,0);
+	flags &= ~O_NONBLOCK;
+	fcntl(fd,F_SETFL,flags);
+}
+
+
+void dev_nonblock(int fd){
+	int flags;
+
+	flags = fcntl(fd,F_GETFL,0);
+	flags |= O_NONBLOCK;
+	fcntl(fd,F_SETFL,flags);
+}
+
 int dev_close(int fd){
 
+	if (fd < 0){
+#if (DEBUG > 0)
+		printf("DBG:fd [%d] close\n", fd);
+#endif
+		return -1;
+	}
+#if (NONBLOCKING_ACCESS > 0)
+
+	dev_block(fd);
+#endif
 	tcflush(fd, TCIOFLUSH);
 	close(fd);
+#if (DEBUG > 0)
 	printf("DBG:fd [%d] close\n", fd);
+#endif
 
 	return 0;
 }
 
 int dev_write(int fd, const char *str, int len){
 
-	int rt;
 	int n		= 0;
 	int tot_n	= 0;
-	const char *str_tmp	= str;
 
 	while (len){
 
 		n = write(fd, str+tot_n, len);
 		if (n < 0){
-			if (n == EINTR){
+			if (errno == EINTR){
 				continue;
 			}else {
 				break;
@@ -212,12 +451,13 @@ int dev_write(int fd, const char *str, int len){
 	return tot_n;
 }
 
+#if (NONBLOCKING_ACCESS > 0)
+
 int char_read(int fd, char *buf, int len, int maxwaittime)	
 {
 	int		no		= 0;
 	int		rt;
 	int		loop	= 1;
-	int		rtnum	= len;
 	struct	timeval tv;
 	struct	timeval *ptimeval;
 	fd_set	readfd;
@@ -237,7 +477,7 @@ int char_read(int fd, char *buf, int len, int maxwaittime)
 		FD_SET(fd, &readfd);
 		rt = select(fd + 1, &readfd, NULL, NULL, ptimeval);
 		if (rt == -1){
-			if (rt == EINTR){
+			if (errno == EINTR){
 				loop	= 1;
 				continue;
 			}else{
@@ -249,6 +489,9 @@ int char_read(int fd, char *buf, int len, int maxwaittime)
 				if (rt > 0){
 					no += rt;
 				}else {
+					if (errno == EINTR){
+						continue;
+					}
 				#if (DEBUG > 0)
 
 					printf("no = %d, len = %d, read return -1\n", no, rtnum);
@@ -282,6 +525,10 @@ int dev_read(int fd, char *buf, int *plen, int wait_time){
 		return rt;
 	}
 
+#if (DEBUG > 0)
+
+	printf("DBG:non-blocking read called\n");
+#endif
 	while ((rt = char_read(fd, (char *)&buf[len], cnt_per_read, interval_time_per_read)) > 0){
 		len			+= rt;
 		interval_time_per_read	= 100;
@@ -290,10 +537,49 @@ int dev_read(int fd, char *buf, int *plen, int wait_time){
 		*plen				= len;
 	}
 
-	return rt;
+	return len;
 }
+#else
 
-int tty_dev_open(const char *pdev, int baud){
+//blocking read
+int dev_read(int fd, char *buf, int *plen, int wait_time){
+
+	int		len				= 0;
+	int		rt				= -1;
+	(void)wait_time;
+
+	if (NULL == buf){
+		return rt;
+	}
+
+#if (DEBUG > 0)
+
+	printf("DBG:blocking read called\n");
+#endif
+	while (1){
+
+		len = read(fd, (char *)buf, WIDTH_TOTAL);
+		if (len < 0){
+			if (errno == EINTR){
+				continue;
+			}else {
+				break;
+			}
+		}else {
+			break;
+		}
+	}
+	if (NULL != plen){
+		*plen				= len;
+	}
+
+	return len;
+}
+#endif
+
+/*----------------------------------------------------------------------*/
+
+int tty_dev_open(const char *pdev, struct termios *ptermios, int baud){
 
 	int fd;
 
@@ -301,6 +587,10 @@ int tty_dev_open(const char *pdev, int baud){
 
 	if (fd < 0) {
 		fprintf(stderr, "Error opening %s: %s\n", pdev, strerror(errno));
+		return -1;
+	}
+
+	if (dev_conf_save(fd, ptermios) < 0){
 		return -1;
 	}
 	if (dev_conf(fd, baud, BITS_DEFAULT, STOP_DEFAULT, PARITY_DEFAULT) < 0) {
@@ -318,6 +608,18 @@ int tty_dev_open(const char *pdev, int baud){
 
 	return fd;
 }
+
+int tty_dev_close(int fd, struct termios *ptermios){
+
+	if (fd < 0){
+		printf("fd[%d] tty dev close failed\n", fd);
+		return -1;
+	}
+	dev_conf_restore(fd, ptermios);
+	return dev_close(fd);
+}
+
+/*----------------------------------------------------------------------*/
 
 /* The name of this program */
 const char * program_name;
@@ -352,13 +654,50 @@ void print_usage (FILE *stream, int exit_code)
 			);
     exit(exit_code);
 }
+
+/*----------------------------------------------------------------------*/
+
+int channel_numb_get(int *ptotal_numb, int *fist_channel){
+
+	int		i= 1;
+	int		fd;
+	int		first = -1;
+	int		total = 0;
+
+	while (1){
+
+		if ((fd = dev_open(i)) < 0){
+			break;
+		}
+		if (-1 == first){
+			first= i;
+		}
+		dev_close(fd);
+		total++;
+		i++;
+	}
+	if (NULL != ptotal_numb){
+		*ptotal_numb = total;
+	}
+	if (NULL != fist_channel){
+		*fist_channel = first;
+	}
+#if (DEBUG > 0)
+
+	printf("DBG:total numb:%d, first numb:%d\n", total, first);
+#endif
+
+	return 1;
+}
+
+/*----------------------------------------------------------------------*/
+
 /*
 	*@breif  main()
  */
 int main(int argc, char *argv[])
 {
-    int  src_fd = -1, dest_fd = -1, next_option, havearg = 0;
-	int  option_d_assigned = 0, option_t_assigned  = 0;
+	int  next_option, havearg = 0;
     char *src_dev = NULL; /* Default device */
     char *dest_dev = NULL; /* Default device */
 	char *send_dev;
@@ -372,7 +711,6 @@ int main(int argc, char *argv[])
 	int loop_total  = -1;
 	int fail_cnt, success_cnt;
  	int nread, nsend, send;			/* Read the counts of data */
-	pid_t pid;
 	char xmit[WIDTH_TOTAL];
  	char buff[WIDTH_TOTAL];		/* Recvice data buffer */
 
@@ -382,13 +720,11 @@ int main(int argc, char *argv[])
     unsigned long total = 0;
     unsigned long samecnt = 0;
 #endif
-	int	count	= 0;
 	time_t	now_time;
 	int function = FUNCTION_SEND_RECV;
 	FILE *fs_p = NULL;  
 	unsigned int seed = 0;  
-	int	 random_send;
-	int  width_ctrl, width_total = WIDTH_INIT;
+	int  width_total = WIDTH_INIT;
 	int  index, rt;
 	int  baud	= BAUD_DEFAULT;
 		      
@@ -426,7 +762,7 @@ int main(int argc, char *argv[])
 					havearg = 1;
 				}else {
 					print_usage (stderr, 1);
-					abort ();
+					goto quit;
 				}
 				break;
             case -1:
@@ -434,43 +770,46 @@ int main(int argc, char *argv[])
             case '?':
                 print_usage (stderr, 1);
             default:
-                abort ();
+                goto quit;
         }
     }while(next_option != -1);
 
 	if ((NULL == src_dev) && (NULL == dest_dev)){
 		printf("please assign src_dev or dest_dev\n");
-		return -1;
+		goto quit;
 	}else if ((NULL != src_dev) && (NULL != dest_dev)){
 		if (0 == strcmp(src_dev, dest_dev)){
 			printf("src_dev can not be dest_dev\n");
-			return -1;
+			goto quit;
 		}
 	}
 	if (NULL != src_dev){
-		src_fd = tty_dev_open((const char *)src_dev, baud);
+		src_fd = tty_dev_open((const char *)src_dev, &src_oldtermios, baud);
 		if (src_fd < 0){
-			return -1;
+			goto quit_1;
 		}
 	}
 	if (NULL != dest_dev){
-		dest_fd = tty_dev_open((const char *)dest_dev, baud);
+		dest_fd = tty_dev_open((const char *)dest_dev, &dest_oldtermios, baud);
 		if (dest_fd < 0){
-			return -1;
+			goto quit_1;
 		}
 	}
+	stdin_init();
+	stdin_flush();
+	signal(SIGINT, hand_sig);
 	fs_p = fopen ("/dev/urandom", "r");  
 	if (NULL == fs_p)   
 	{  
 		printf("Can not open /dev/urandom\n");  
-		return -1;  
+		goto quit_2;
 	}
 	
 	switch_flg					= 0;
 	fail_cnt					= 0;
 	success_cnt					= 0;
 	read_wait_time				= 1000;      //unit:ms
-	while ((loop_cnt <= loop_total) || (-1 == loop_total)){
+	while (((loop_cnt <= loop_total) || (-1 == loop_total)) && (TRUE == run)){
 		now_time				= time(NULL);
 		strcpy(xmit, ctime((const time_t *)&now_time));
 		xmit[strlen(xmit) - 1]		= 0;
@@ -537,10 +876,10 @@ int main(int argc, char *argv[])
 		if (recv_fd > 0){
 			memset(buff, 0, sizeof(buff));
 			rt = dev_read(recv_fd, buff, &nread, read_wait_time);
-			if (nread > 0) {
+			if (rt > 0) {
 				printf("recv len : [%d]\n", nread);
 				printf("recv data: %s\n", buff);
-			}else if (nread == 0){
+			}else if (rt == 0){
 				printf("recv     : [timeout! please check hardware!]\n");
 			}else {
 			//	printf("recv err : [%s]\n", strerror(errno));
@@ -558,15 +897,29 @@ int main(int argc, char *argv[])
 		}
 		sleep(1);
 	}
-	if ((FUNCTION_SEND_RECV == function) && (-1 != loop_total)){
-		printf("<------------------summarize-------------------->\n");
-		printf("totol   count: [%d]\n", loop_total);
-		printf("success count: [%d]\n", success_cnt);
-		printf("fail    count: [%d]\n", fail_cnt);
-		printf("success rate : [%.2f%]\n", ((float)success_cnt/loop_total)*100);
-	}	
+	if (TRUE == run){
+		if ((FUNCTION_SEND_RECV == function) && (-1 != loop_total)){
+			printf("<---------------------summarize--------------------->\n");
+			printf("device[%s] <-----> device[%s]\n", src_dev, dest_dev);
+			printf("totol   count: [%d]\n", loop_total);
+			printf("success count: [%d]\n", success_cnt);
+			printf("fail    count: [%d]\n", fail_cnt);
+			printf("success rate : [%.2f%%]\n", ((float)success_cnt/loop_total)*100);
+		}
+	}else {
+		printf("SIGINT signal occured!\n");
+	}
+	fclose(fs_p);
+quit_2:
+	stdin_uninit();
+
+quit_1:
+	tty_dev_close(src_fd, &src_oldtermios);
+	tty_dev_close(dest_fd, &dest_oldtermios);
 
 	return 0;
+quit:
+	return -1;
 }
 
 #if 0
