@@ -11,6 +11,7 @@
 #include <time.h>
 #include <signal.h>
 
+/*----------------------------------------------------------------------*/
 
 #define FALSE			(1)
 #define TRUE			(0)
@@ -35,8 +36,8 @@
 #define DATA_PREFIX(x)  "<"x">"
 #define DEV_FILE_PATH	"/dev/ttySAC"
 
-#define DEBUG			(1)
-#define NONBLOCKING_ACCESS	(0)
+#define DEBUG			(0)
+#define NONBLOCKING_ACCESS	(1)
 
 enum {
 	FUNCTION_SEND	= 1,
@@ -48,6 +49,8 @@ struct baud_setting{
 	int		m_baud;
 	int     m_value;
 };
+
+/*----------------------------------------------------------------------*/
 
 int  src_fd		= -1;
 struct termios src_oldtermios;
@@ -84,9 +87,18 @@ int tty_dev_close(int fd, struct termios *ptermios);
 int dev_conf_save(int fd, struct termios *ptermios);
 int dev_conf_restore(int fd, struct termios *ptermios);
 
+//若想中断信号发生时 程序通过判断run的取值为false而退出  则需要更改dev_read函数的逻辑 当内部的read、select
+//返回-1且errno为INTR时，不要再进行循环  而是直接退出即可  
+//
+//目前程序直接在信号处理函数中退出  可根据实际需要更改逻辑即可
 void hand_sig(int signo) {
 
 	run = FALSE;
+	stdin_uninit();
+	tty_dev_close(src_fd, &src_oldtermios);
+	tty_dev_close(dest_fd, &dest_oldtermios);
+
+	exit(0);
 }
 
 /*----------------------------------------------------------------------*/
@@ -331,7 +343,37 @@ int dev_conf(int fd, int baud, int databits, int stopbits, int parity){
        newtio.c_cflag &= ~CSTOPB;
 	   break;
 	}
-	newtio.c_cc[VTIME] = 0; newtio.c_cc[VMIN] = 0;
+
+/*
+ *
+ * 在串口编程模式下，open未设置O_NONBLOCK或O_NDELAY的情况下。c_cc[VTIME]和c_cc[VMIN]影响read函数的返回。
+ * 若在open或fcntl设置了O_NDELALY或O_NONBLOCK标志，read调用不会阻塞而是立即返回，那么VTIME和VMIN就没有
+ * 意义，效果等同于与把VTIME和VMIN都设为了0。
+ *
+ * VTIME:定义等待的时间，单位是百毫秒(通常是一个8位的unsigned char变量，取值不能大于cc_t)。
+ * VMIN:定义了要求等待的最小字节数，(不是要求读的字节数——read()的第三个参数才是指定要求读的最大字节数)，
+ * 这个字节数可能是0
+ *
+ * c_cc[VMIN] > 0, c_cc[VTIME] == 0 如果VTIME取0，VMIN定义了要求等待读取的最小字节数。
+ * 函数read()只有在读取了VMIN个字节的数据或者收到一个信号的时候才返回。
+ *
+ * c_cc[VMIN] == 0, c_cc[VTIME] > 0 如果VMIN取0，VTIME定义了即使没有数据可以读取，read()函数返回前也要
+ * 等待几百毫秒的时间量。这时，read()函数不需要像其通常情况那样要遇到一个文件结束标志才返回0。
+ *
+ * c_cc[VMIN] > 0, c_cc[VTIME] > 0 如果VTIME和VMIN都不取0，VTIME定义的是当接收到第一个字节的数据后开始
+ * 计算等待的时间量。如果当调用read函数
+ * 时可以得到数据，计时器马上开始计时。如果当调用read函数时还没有任何数据可读，则等接收到第一个字节的数据后，
+ * 计时器开始计时。函数read可能会在读取到VMIN个字节的数据后返回，也可能在计时完毕后返回，这主要取决于哪个
+ * 条件首先实现。不过函数至少会读取到一个字节的数据，因为计时器是在读取到第一个数据时开始计时的。
+ *
+ * c_cc[VMIN] == 0, c_cc[VTIME] == 0 如果VTIME和VMIN都取0，即使读取不到任何数据，函数read也会立即返回。
+ * 同时，返回值0表示read函数不需要等待文件结束标志就返回了。
+ *
+ */
+
+	newtio.c_cc[VTIME] = 0;                 //注意此处的设置
+	newtio.c_cc[VMIN] = 1;
+
 	newtio.c_cflag |= (CLOCAL | CREAD);
 	//newtio.c_oflag |= OPOST;
 	newtio.c_iflag &= ~(IXON | IXOFF | IXANY);
