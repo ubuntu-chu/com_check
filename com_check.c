@@ -36,7 +36,7 @@
 #define DATA_PREFIX(x)  "<"x">"
 #define DEV_FILE_PATH	"/dev/ttySAC"
 
-#define DEBUG			(0)
+#define DEBUG			(1)
 #define NONBLOCKING_ACCESS	(1)
 
 enum {
@@ -417,8 +417,7 @@ int dev_path_open(const char * ppath){
 #endif
 #else
 
-    //fd = open(ppath, O_RDWR | O_NOCTTY);
-    fd = open(ppath, O_RDWR );
+    fd = open(ppath, O_RDWR | O_NOCTTY);
 #if (DEBUG > 0)
 
 	printf("DBG:fd [%d] block open\n", fd);
@@ -536,7 +535,7 @@ int char_read(int fd, char *buf, int len, int maxwaittime)
 					}
 				#if (DEBUG > 0)
 
-					printf("no = %d, len = %d, read return -1\n", no, rtnum);
+					printf("no = %d, len = %d, read return -1\n", no, len);
 				#endif
 					return no;
 				}
